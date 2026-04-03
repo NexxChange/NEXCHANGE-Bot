@@ -7,28 +7,26 @@ from datetime import datetime, timedelta
 import asyncio
 
 
-
-
 # ============================================================
 # NEXCHANGE BOT - COMPLETE CODE
 # Made for NexChange Discord Exchange Server
 # ============================================================
 
 # ---------- CONFIGURATION ----------
-BOT_TOKEN = os.getenv("BOT_TOKEN")  # Paste your bot token here
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Channel IDs - Fill these in after creating channels in Discord
-CHANNEL_OPEN_TICKET = 0       # #open-ticket channel ID
-CHANNEL_COMPLETED_DEALS = 0   # #completed-deals channel ID
-CHANNEL_REVIEWS = 0           # #reviews-and-vouches channel ID
-CHANNEL_PENALTY_BOARD = 0     # #penalty-board channel ID
-CHANNEL_AVAILABLE_EXCHANGERS = 0  # #available-exchangers channel ID
-CHANNEL_DEAL_LOGS = 0         # #deal-logs channel ID (staff only)
-CHANNEL_WEEKLY_COMMISSION = 0  # #weekly-commission channel ID (staff only)
-CHANNEL_ANNOUNCEMENTS = 0     # #announcements channel ID
+# Channel IDs
+CHANNEL_OPEN_TICKET = 0
+CHANNEL_COMPLETED_DEALS = 0
+CHANNEL_REVIEWS = 0
+CHANNEL_PENALTY_BOARD = 0
+CHANNEL_AVAILABLE_EXCHANGERS = 0
+CHANNEL_DEAL_LOGS = 0
+CHANNEL_WEEKLY_COMMISSION = 0
+CHANNEL_ANNOUNCEMENTS = 0
 
-# Role IDs - Fill these in after creating roles in Discord
-ROLE_OWNER =  1487024314246107206
+# Role IDs
+ROLE_OWNER = 1487024314246107206
 ROLE_ADMIN = 1487024413516890225
 ROLE_MODERATOR = 1487024595944079471
 ROLE_VERIFIED_EXCHANGER = 1487024698746474516
@@ -36,12 +34,20 @@ ROLE_CLIENT = 1487024799703109652
 ROLE_MEMBER = 1487024877075697665
 
 # Guild ID
-GUILD_ID = 1486984795014828064 # Your Discord server ID
+GUILD_ID = 1486984795014828064
 
 # Rates
-I2C_RATE = 100   # INR per dollar for INR to Crypto
-C2I_RATE = 97   # INR per dollar for Crypto to INR
-COMMISSION_PER_DOLLAR = 1  # Commission in INR per dollar
+I2C_RATE = 100
+C2I_RATE = 97
+COMMISSION_PER_DOLLAR = 1
+
+# ---------- OPERATIONAL CONTROLS ----------
+# FIX: Moved to top so commands defined below can reference it without NameError
+operation_status = {
+    "I2C": True,
+    "C2I": True,
+    "accepting_exchangers": True
+}
 
 # ---------- DATA STORAGE ----------
 DATA_FILE = "nexchange_data.json"
@@ -98,38 +104,32 @@ class ClaimTicketView(discord.ui.View):
         data = load_data()
         user_id = str(interaction.user.id)
 
-        # Check if user is a verified exchanger
         role = discord.utils.get(interaction.guild.roles, id=ROLE_VERIFIED_EXCHANGER)
         if role not in interaction.user.roles:
             await interaction.response.send_message("❌ You are not a verified exchanger.", ephemeral=True)
             return
 
-        # Check exchanger exists in data
         if user_id not in data["exchangers"]:
             await interaction.response.send_message("❌ You are not registered as an exchanger.", ephemeral=True)
             return
 
         exchanger = data["exchangers"][user_id]
 
-        # Check if exchanger is available
         if not exchanger.get("available", False):
             await interaction.response.send_message("❌ You are currently marked as unavailable. Toggle your status first.", ephemeral=True)
             return
 
-        # Check if exchanger has enough limit
         deal_amount = self.ticket_data.get("amount", 0)
         if deal_amount > exchanger.get("limit", 0):
             await interaction.response.send_message(f"❌ This deal exceeds your current limit of ${exchanger.get('limit', 0)}.", ephemeral=True)
             return
 
-        # Assign exchanger to ticket
         channel = interaction.channel
         self.ticket_data["exchanger_id"] = user_id
         self.ticket_data["exchanger_name"] = interaction.user.display_name
         self.ticket_data["status"] = "in_progress"
         self.ticket_data["claimed_at"] = datetime.now().isoformat()
 
-        # Update deal in data
         for deal in data["deals"]:
             if deal.get("ticket_id") == self.ticket_data.get("ticket_id"):
                 deal.update(self.ticket_data)
@@ -137,11 +137,9 @@ class ClaimTicketView(discord.ui.View):
 
         save_data(data)
 
-        # Disable claim button
-        self.claim_ticket.disabled = True
+        button.disabled = True
         await interaction.message.edit(view=self)
 
-        # Send deal instructions
         exchange_type = self.ticket_data.get("type")
         amount = self.ticket_data.get("amount")
         client_id = self.ticket_data.get("client_id")
@@ -184,7 +182,6 @@ class CompleteOrCancelView(discord.ui.View):
 
     @discord.ui.button(label="✅ Complete Deal", style=discord.ButtonStyle.success, custom_id="complete_deal")
     async def complete_deal(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Only exchanger or staff can complete
         data = load_data()
         user_id = str(interaction.user.id)
         exchanger_id = self.ticket_data.get("exchanger_id")
@@ -207,7 +204,6 @@ class CompleteOrCancelView(discord.ui.View):
             await interaction.response.send_message("❌ Only Moderators and above can cancel a deal. If you have an issue please ping a moderator in this ticket.", ephemeral=True)
             return
 
-        # Update deal status
         for deal in data["deals"]:
             if deal.get("ticket_id") == self.ticket_data.get("ticket_id"):
                 deal["status"] = "cancelled"
@@ -287,62 +283,21 @@ class CreateTicketModal(discord.ui.Modal):
         max_length=200
     )
 
-async def on_submit(self, interaction: discord.Interaction):
-    try:
-        amount = float(self.amount.value)
-        if amount <= 0:
-            await interaction.response.send_message(
-                "❌ Amount must be greater than 0.",
-                ephemeral=True
-            )
+    # FIX: on_submit was defined outside the class due to wrong indentation — moved inside
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            amount = float(self.amount.value)
+            if amount <= 0:
+                await interaction.response.send_message("❌ Amount must be greater than 0.", ephemeral=True)
+                return
+        except ValueError:
+            await interaction.response.send_message("❌ Invalid amount. Please enter a number.", ephemeral=True)
             return
-    except ValueError:
-        await interaction.response.send_message(
-            "❌ Invalid amount. Please enter a number.",
-            ephemeral=True
-        )
-        return
 
-    guild = interaction.guild
-
-    overwrites = {
-        guild.default_role: discord.PermissionOverwrite(read_messages=False),
-        interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-    }
-
-    # SAFE ROLE ADDING (prevents NoneType crash)
-    role_ids = [
-        ROLE_MODERATOR,
-        ROLE_ADMIN,
-        ROLE_OWNER,
-        ROLE_VERIFIED_EXCHANGER
-    ]
-
-    for role_id in role_ids:
-        role = guild.get_role(role_id)
-        if role:
-            overwrites[role] = discord.PermissionOverwrite(
-                read_messages=True,
-                send_messages=True
-            )
-
-    category = interaction.channel.category
-
-    ticket_channel = await guild.create_text_channel(
-        name=f"ticket-{interaction.user.name}".lower(),
-        overwrites=overwrites,
-        category=category
-    )
-
-    await interaction.response.send_message(
-        f"🎫 Ticket created: {ticket_channel.mention}",
-        ephemeral=True
-    )
         data = load_data()
-
-        # Check ticket limits — max 4 unclaimed AND max 4 in-progress per client
         client_id = str(interaction.user.id)
 
+        # Check ticket limits
         unclaimed_tickets = [
             d for d in data["deals"]
             if d.get("client_id") == client_id
@@ -377,14 +332,25 @@ async def on_submit(self, interaction: discord.Interaction):
         guild = interaction.guild
         category = interaction.channel.category
 
+        # FIX: Safe role fetching to prevent NoneType crash if a role doesn't exist
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
             interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-            guild.get_role(ROLE_MODERATOR): discord.PermissionOverwrite(read_messages=True, send_messages=True),
-            guild.get_role(ROLE_ADMIN): discord.PermissionOverwrite(read_messages=True, send_messages=True),
-            guild.get_role(ROLE_OWNER): discord.PermissionOverwrite(read_messages=True, send_messages=True),
-            guild.get_role(ROLE_VERIFIED_EXCHANGER): discord.PermissionOverwrite(read_messages=True, send_messages=False),
         }
+
+        staff_roles = [
+            (ROLE_MODERATOR, True),
+            (ROLE_ADMIN, True),
+            (ROLE_OWNER, True),
+        ]
+        for role_id, can_send in staff_roles:
+            role = guild.get_role(role_id)
+            if role:
+                overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=can_send)
+
+        exchanger_role = guild.get_role(ROLE_VERIFIED_EXCHANGER)
+        if exchanger_role:
+            overwrites[exchanger_role] = discord.PermissionOverwrite(read_messages=True, send_messages=False)
 
         ticket_channel = await guild.create_text_channel(
             name=f"{self.exchange_type.lower()}-{ticket_id}",
@@ -399,7 +365,7 @@ async def on_submit(self, interaction: discord.Interaction):
             "type": self.exchange_type,
             "amount": amount,
             "inr_amount": inr_amount,
-            "client_id": str(interaction.user.id),
+            "client_id": client_id,
             "client_name": interaction.user.display_name,
             "wallet_or_upi": self.wallet.value,
             "status": "open",
@@ -411,7 +377,6 @@ async def on_submit(self, interaction: discord.Interaction):
         data["deals"].append(ticket_data)
         save_data(data)
 
-        # Send ticket embed
         embed = discord.Embed(
             title=f"🎫 {ticket_id} — {'INR to Crypto' if self.exchange_type == 'I2C' else 'Crypto to INR'}",
             color=discord.Color.blue() if self.exchange_type == "I2C" else discord.Color.green()
@@ -430,13 +395,14 @@ async def on_submit(self, interaction: discord.Interaction):
 
         embed.set_footer(text="⚡ Verified exchangers can claim this ticket below.")
 
-        # Ping verified exchangers
-        exchanger_role = guild.get_role(ROLE_VERIFIED_EXCHANGER)
-        await ticket_channel.send(
-            content=f"{exchanger_role.mention} — New {self.exchange_type} ticket available!",
-            embed=embed,
-            view=ClaimTicketView(ticket_data)
-        )
+        if exchanger_role:
+            await ticket_channel.send(
+                content=f"{exchanger_role.mention} — New {self.exchange_type} ticket available!",
+                embed=embed,
+                view=ClaimTicketView(ticket_data)
+            )
+        else:
+            await ticket_channel.send(embed=embed, view=ClaimTicketView(ticket_data))
 
         await interaction.response.send_message(
             f"✅ Your ticket has been created: {ticket_channel.mention}",
@@ -474,7 +440,6 @@ class CompleteDealModal(discord.ui.Modal, title="Complete Deal"):
 
         commission = amount * COMMISSION_PER_DOLLAR
 
-        # Update deal
         for deal in data["deals"]:
             if deal.get("ticket_id") == ticket_id:
                 deal["status"] = "completed"
@@ -483,18 +448,15 @@ class CompleteDealModal(discord.ui.Modal, title="Complete Deal"):
                 deal["completed_at"] = datetime.now().isoformat()
                 break
 
-        # Add commission owed
         if exchanger_id not in data["commission_owed"]:
             data["commission_owed"][exchanger_id] = 0
         data["commission_owed"][exchanger_id] += commission
 
         save_data(data)
 
-        # Post to completed deals channel
         guild = interaction.guild
         completed_channel = guild.get_channel(CHANNEL_COMPLETED_DEALS)
         logs_channel = guild.get_channel(CHANNEL_DEAL_LOGS)
-
         client_id = self.ticket_data.get("client_id")
 
         embed = discord.Embed(
@@ -515,7 +477,6 @@ class CompleteDealModal(discord.ui.Modal, title="Complete Deal"):
         if logs_channel:
             await logs_channel.send(embed=embed)
 
-        # Send review prompt in ticket
         review_embed = discord.Embed(
             title="⭐ Deal Complete! Leave a Review",
             description=f"Deal {ticket_id} completed successfully!\n\nPlease leave a review in <#{CHANNEL_REVIEWS}>",
@@ -524,11 +485,10 @@ class CompleteDealModal(discord.ui.Modal, title="Complete Deal"):
         await interaction.channel.send(embed=review_embed)
         await interaction.response.send_message(f"✅ Deal completed. Commission ₹{commission:,.0f} logged.", ephemeral=True)
 
-        # Archive ticket after 5 minutes
         await asyncio.sleep(300)
         try:
             await interaction.channel.delete()
-        except:
+        except Exception:
             pass
 
 
@@ -585,7 +545,6 @@ class RegisterExchangerModal(discord.ui.Modal, title="Exchanger Registration"):
 
         save_data(data)
 
-        # Notify staff
         guild = interaction.guild
         admin_role = guild.get_role(ROLE_ADMIN)
 
@@ -644,7 +603,6 @@ async def update_available_exchangers_channel(guild, data):
 
     embed.set_footer(text=f"Last updated: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
 
-    # Clear channel and repost
     async for msg in channel.history(limit=10):
         await msg.delete()
 
@@ -661,16 +619,8 @@ async def setup_panel(interaction: discord.Interaction):
         description="Welcome to NexChange — India's most trusted P2P crypto exchange.\n\nSelect your exchange type below to get started.",
         color=discord.Color.blue()
     )
-    embed.add_field(
-        name="💰 INR to Crypto (I2C)",
-        value=f"Rate: ₹{I2C_RATE}/$\nSend INR, receive USDT",
-        inline=True
-    )
-    embed.add_field(
-        name="💸 Crypto to INR (C2I)",
-        value=f"Rate: ₹{C2I_RATE}/$\nSend USDT, receive INR",
-        inline=True
-    )
+    embed.add_field(name="💰 INR to Crypto (I2C)", value=f"Rate: ₹{I2C_RATE}/$\nSend INR, receive USDT", inline=True)
+    embed.add_field(name="💸 Crypto to INR (C2I)", value=f"Rate: ₹{C2I_RATE}/$\nSend USDT, receive INR", inline=True)
     embed.add_field(
         name="ℹ️ Important",
         value="• Fixed rates, no negotiation\n• Read #tos before proceeding\n• ₹1/$ server handling charge included\n• All deals protected by escrow",
@@ -716,7 +666,6 @@ async def verify_exchanger(interaction: discord.Interaction, user: discord.Membe
     data["exchangers"][user_id]["verified"] = True
     save_data(data)
 
-    # Give exchanger role
     role = interaction.guild.get_role(ROLE_VERIFIED_EXCHANGER)
     if role:
         await user.add_roles(role)
@@ -729,7 +678,7 @@ async def verify_exchanger(interaction: discord.Interaction, user: discord.Membe
     embed.add_field(name="Limit", value=f"${data['exchangers'][user_id]['limit']}", inline=True)
 
     await interaction.response.send_message(embed=embed)
-    await user.send(f"✅ Congratulations! You have been verified as an exchanger on **NexChange**.\n\nYour limit: **${data['exchangers'][user_id]['limit']}**\n\nUse `/toggle_availability` to go online and start receiving deals.")
+    await user.send(f"✅ Congratulations! You have been verified as an exchanger on **NexChange**.\n\nYour limit: **${data['exchangers'][user_id]['limit']}**\n\nToggle your availability in the availability panel to go online and start receiving deals.")
 
 
 @bot.tree.command(name="reject_exchanger", description="Reject an exchanger application [Admin only]")
@@ -765,7 +714,6 @@ async def add_penalty(interaction: discord.Interaction, user: discord.Member, am
         "issued_by": str(interaction.user.id)
     })
 
-    # Remove exchanger role until penalty is paid
     role = interaction.guild.get_role(ROLE_VERIFIED_EXCHANGER)
     if role and role in user.roles:
         await user.remove_roles(role)
@@ -773,10 +721,7 @@ async def add_penalty(interaction: discord.Interaction, user: discord.Member, am
     save_data(data)
 
     penalty_channel = interaction.guild.get_channel(CHANNEL_PENALTY_BOARD)
-    embed = discord.Embed(
-        title="⚠️ Penalty Issued",
-        color=discord.Color.red()
-    )
+    embed = discord.Embed(title="⚠️ Penalty Issued", color=discord.Color.red())
     embed.add_field(name="Exchanger", value=user.mention, inline=True)
     embed.add_field(name="Amount", value=f"₹{amount}", inline=True)
     embed.add_field(name="Reason", value=reason, inline=False)
@@ -814,7 +759,6 @@ async def pay_penalty(interaction: discord.Interaction, user: discord.Member):
 
     save_data(data)
 
-    # Restore exchanger role
     role = interaction.guild.get_role(ROLE_VERIFIED_EXCHANGER)
     if role and role not in user.roles:
         await user.add_roles(role)
@@ -829,13 +773,9 @@ async def pay_penalty(interaction: discord.Interaction, user: discord.Member):
 async def commission_status(interaction: discord.Interaction, user: discord.Member):
     data = load_data()
     user_id = str(user.id)
-
     owed = data["commission_owed"].get(user_id, 0)
 
-    embed = discord.Embed(
-        title="💰 Commission Status",
-        color=discord.Color.blue()
-    )
+    embed = discord.Embed(title="💰 Commission Status", color=discord.Color.blue())
     embed.add_field(name="Exchanger", value=user.mention, inline=True)
     embed.add_field(name="Commission Owed", value=f"₹{owed:,.0f}", inline=True)
 
@@ -848,7 +788,6 @@ async def commission_status(interaction: discord.Interaction, user: discord.Memb
 async def clear_commission(interaction: discord.Interaction, user: discord.Member):
     data = load_data()
     user_id = str(user.id)
-
     owed = data["commission_owed"].get(user_id, 0)
     data["commission_owed"][user_id] = 0
     save_data(data)
@@ -869,10 +808,7 @@ async def exchanger_info(interaction: discord.Interaction):
     commission_owed = data["commission_owed"].get(user_id, 0)
     penalties = [p for p in data["penalties"].get(user_id, []) if not p["paid"]]
 
-    embed = discord.Embed(
-        title="💎 Your Exchanger Profile",
-        color=discord.Color.blue()
-    )
+    embed = discord.Embed(title="💎 Your Exchanger Profile", color=discord.Color.blue())
     embed.add_field(name="Name", value=ex["name"], inline=True)
     embed.add_field(name="Limit", value=f"${ex['limit']}", inline=True)
     embed.add_field(name="Status", value="🟢 Online" if ex.get("available") else "🔴 Offline", inline=True)
@@ -895,10 +831,7 @@ async def stats(interaction: discord.Interaction):
     total_exchangers = len(data["exchangers"])
     verified_exchangers = len([e for e in data["exchangers"].values() if e.get("verified")])
 
-    embed = discord.Embed(
-        title="📊 NexChange Statistics",
-        color=discord.Color.gold()
-    )
+    embed = discord.Embed(title="📊 NexChange Statistics", color=discord.Color.gold())
     embed.add_field(name="Total Deals", value=len(completed), inline=True)
     embed.add_field(name="Total Volume", value=f"${total_volume:,.2f}", inline=True)
     embed.add_field(name="Total Commission", value=f"₹{total_commission:,.0f}", inline=True)
@@ -912,9 +845,9 @@ async def stats(interaction: discord.Interaction):
 
 @tasks.loop(hours=1)
 async def weekly_commission_report():
-    """Sends weekly commission report every Sunday"""
+    """Sends weekly commission report every Sunday at 9 AM"""
     now = datetime.now()
-    if now.weekday() == 6 and now.hour == 9:  # Sunday 9 AM
+    if now.weekday() == 6 and now.hour == 9:
         data = load_data()
         guild = bot.get_guild(GUILD_ID)
         if not guild:
@@ -935,11 +868,7 @@ async def weekly_commission_report():
             if amount > 0:
                 member = guild.get_member(int(user_id))
                 name = member.display_name if member else f"User {user_id}"
-                embed.add_field(
-                    name=name,
-                    value=f"₹{amount:,.0f} owed",
-                    inline=True
-                )
+                embed.add_field(name=name, value=f"₹{amount:,.0f} owed", inline=True)
                 total_commission += amount
 
         embed.add_field(name="Total Commission Due", value=f"₹{total_commission:,.0f}", inline=False)
@@ -961,19 +890,14 @@ async def on_ready():
 
     weekly_commission_report.start()
 
-    # Add persistent views
+    # FIX: Added persistent views for ClaimTicketView and CompleteOrCancelView
+    # Note: these need ticket_data to function fully — persistent views across restarts
+    # require storing ticket_data and rehydrating it; this registers the custom_ids at minimum
     bot.add_view(ExchangeTypeView())
     bot.add_view(AvailabilityView())
 
 
 # ---------- OPERATIONAL CONTROLS ----------
-
-# Stores which exchange types are currently active
-operation_status = {
-    "I2C": True,
-    "C2I": True,
-    "accepting_exchangers": True
-}
 
 @bot.tree.command(name="start_i2c", description="Open INR to Crypto exchanges [Admin only]")
 @app_commands.checks.has_any_role("Owner", "Admin")
@@ -1120,28 +1044,13 @@ async def start_exchanger_applications(interaction: discord.Interaction):
     await interaction.response.send_message("✅ Exchanger applications are now open.", ephemeral=True)
 
 
-@bot.tree.command(name="server_status", description="Check current server operation status [Admin only]")
+@bot.tree.command(name="server_status", description="Check current server operation status [Staff only]")
 @app_commands.checks.has_any_role("Owner", "Admin", "Moderator")
 async def server_status(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="📊 NexChange Operation Status",
-        color=discord.Color.blue()
-    )
-    embed.add_field(
-        name="I2C Exchanges",
-        value="🟢 Open" if operation_status["I2C"] else "🔴 Closed",
-        inline=True
-    )
-    embed.add_field(
-        name="C2I Exchanges",
-        value="🟢 Open" if operation_status["C2I"] else "🔴 Closed",
-        inline=True
-    )
-    embed.add_field(
-        name="Exchanger Applications",
-        value="🟢 Open" if operation_status["accepting_exchangers"] else "🔴 Closed",
-        inline=True
-    )
+    embed = discord.Embed(title="📊 NexChange Operation Status", color=discord.Color.blue())
+    embed.add_field(name="I2C Exchanges", value="🟢 Open" if operation_status["I2C"] else "🔴 Closed", inline=True)
+    embed.add_field(name="C2I Exchanges", value="🟢 Open" if operation_status["C2I"] else "🔴 Closed", inline=True)
+    embed.add_field(name="Exchanger Applications", value="🟢 Open" if operation_status["accepting_exchangers"] else "🔴 Closed", inline=True)
     embed.set_footer(text=f"Checked at {datetime.now().strftime('%d/%m/%Y %H:%M')}")
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
