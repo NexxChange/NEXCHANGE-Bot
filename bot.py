@@ -12,7 +12,7 @@ import asyncio
 # ============================================================
 
 # ---------- CONFIGURATION ----------
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # Paste your bot token here
+BOT_TOKEN = "MTQ4NzMyOTc3NjQyNjI5MTIxMA.G_BngK.BXgv_hXNpP-1Ir22LU_s8AiHjvj6QPKbtopZoU"  # Paste your bot token here
 
 # Channel IDs - Fill these in after creating channels in Discord
 CHANNEL_OPEN_TICKET = 0       # #open-ticket channel ID
