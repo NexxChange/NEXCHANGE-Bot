@@ -6,6 +6,9 @@ import os
 from datetime import datetime, timedelta
 import asyncio
 
+
+
+
 # ============================================================
 # NEXCHANGE BOT - COMPLETE CODE
 # Made for NexChange Discord Exchange Server
@@ -25,19 +28,19 @@ CHANNEL_WEEKLY_COMMISSION = 0  # #weekly-commission channel ID (staff only)
 CHANNEL_ANNOUNCEMENTS = 0     # #announcements channel ID
 
 # Role IDs - Fill these in after creating roles in Discord
-ROLE_OWNER = 0
-ROLE_ADMIN = 0
-ROLE_MODERATOR = 0
-ROLE_VERIFIED_EXCHANGER = 0
-ROLE_CLIENT = 0
-ROLE_MEMBER = 0
+ROLE_OWNER =  1487024314246107206
+ROLE_ADMIN = 1487024413516890225
+ROLE_MODERATOR = 1487024595944079471
+ROLE_VERIFIED_EXCHANGER = 1487024698746474516
+ROLE_CLIENT = 1487024799703109652
+ROLE_MEMBER = 1487024877075697665
 
 # Guild ID
-GUILD_ID = 0  # Your Discord server ID
+GUILD_ID = 1486984795014828064 # Your Discord server ID
 
 # Rates
-I2C_RATE = 97   # INR per dollar for INR to Crypto
-C2I_RATE = 95   # INR per dollar for Crypto to INR
+I2C_RATE = 100   # INR per dollar for INR to Crypto
+C2I_RATE = 97   # INR per dollar for Crypto to INR
 COMMISSION_PER_DOLLAR = 1  # Commission in INR per dollar
 
 # ---------- DATA STORAGE ----------
@@ -284,16 +287,57 @@ class CreateTicketModal(discord.ui.Modal):
         max_length=200
     )
 
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            amount = float(self.amount.value)
-            if amount <= 0:
-                await interaction.response.send_message("❌ Amount must be greater than 0.", ephemeral=True)
-                return
-        except ValueError:
-            await interaction.response.send_message("❌ Invalid amount. Please enter a number.", ephemeral=True)
+async def on_submit(self, interaction: discord.Interaction):
+    try:
+        amount = float(self.amount.value)
+        if amount <= 0:
+            await interaction.response.send_message(
+                "❌ Amount must be greater than 0.",
+                ephemeral=True
+            )
             return
+    except ValueError:
+        await interaction.response.send_message(
+            "❌ Invalid amount. Please enter a number.",
+            ephemeral=True
+        )
+        return
 
+    guild = interaction.guild
+
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(read_messages=False),
+        interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+    }
+
+    # SAFE ROLE ADDING (prevents NoneType crash)
+    role_ids = [
+        ROLE_MODERATOR,
+        ROLE_ADMIN,
+        ROLE_OWNER,
+        ROLE_VERIFIED_EXCHANGER
+    ]
+
+    for role_id in role_ids:
+        role = guild.get_role(role_id)
+        if role:
+            overwrites[role] = discord.PermissionOverwrite(
+                read_messages=True,
+                send_messages=True
+            )
+
+    category = interaction.channel.category
+
+    ticket_channel = await guild.create_text_channel(
+        name=f"ticket-{interaction.user.name}".lower(),
+        overwrites=overwrites,
+        category=category
+    )
+
+    await interaction.response.send_message(
+        f"🎫 Ticket created: {ticket_channel.mention}",
+        ephemeral=True
+    )
         data = load_data()
 
         # Check ticket limits — max 4 unclaimed AND max 4 in-progress per client
