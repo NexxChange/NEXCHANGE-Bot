@@ -863,7 +863,7 @@ async def setup_panel(interaction: discord.Interaction):
     embed = discord.Embed(title="💱 NEXCHANGE EXCHANGE PANEL", description="Welcome to NexChange — India's most trusted P2P crypto exchange.\n\nSelect your exchange type below to get started.", color=discord.Color.blue())
     embed.add_field(name="💰 INR to Crypto (I2C)", value=f"Rate: ₹{rates['I2C']}/$\nEnter ₹ amount — receive USDT", inline=True)
     embed.add_field(name="💸 Crypto to INR (C2I)", value=f"Rate: ₹{rates['C2I']}/$\nEnter $ amount — receive INR", inline=True)
-    embed.add_field(name="ℹ️ Important", value="• Fixed rates, no negotiation\n• Read #tos before proceeding\n• ₹1/$ server handling charge included\n• All deals protected", inline=False)
+    embed.add_field(name="ℹ️ Important", value="• Fixed rates, no negotiation\n• Read #tos before proceeding\n•  All deals protected", inline=False)
     embed.set_footer(text="NexChange — Fast. Safe. Trusted.")
     await interaction.channel.send(embed=embed, view=ExchangeTypeView())
     await interaction.response.send_message("✅ Exchange panel setup complete.", ephemeral=True)
