@@ -82,7 +82,7 @@ def save_data(data):
 
 def get_rates():
     data = load_data()
-    return data.get("rates", {"I2C": 97, "C2I": 95})
+    return data.get("rates", {"I2C": 100, "C2I": 98})
 
 # ---------- BOT SETUP ----------
 intents = discord.Intents.all()
@@ -138,7 +138,7 @@ async def update_available_exchangers_channel(guild, data):
     if not channel:
         return
 
-    rates = data.get("rates", {"I2C": 97, "C2I": 95})
+    rates = data.get("rates", {"I2C": 100, "C2I": 98})
     available = [(uid, ex) for uid, ex in data["exchangers"].items()
                  if ex.get("available") and ex.get("verified")]
 
