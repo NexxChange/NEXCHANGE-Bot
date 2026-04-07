@@ -398,8 +398,8 @@ class CreateTicketModal(discord.ui.Modal):
         super().__init__(title=f"{'INR to Crypto' if exchange_type == 'I2C' else 'Crypto to INR'} Exchange")
         self.exchange_type = exchange_type
 
-    amount = discord.ui.TextInput(label="Amount in USD ($)", placeholder="e.g. 50", required=True, max_length=10)
-    wallet = discord.ui.TextInput(label="Wallet (I2C) / UPI ID (C2I)", placeholder="Your wallet or UPI ID", required=True, max_length=200)
+    amount = discord.ui.TextInput(label="What is the issue you are facing right now?", placeholder="Unable to Verify", required=True, max_length=1000)
+    wallet = discord.ui.TextInput(label="Any thing else you want us to know?", placeholder="yes- what?/ no", required=True, max_length=200)
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
