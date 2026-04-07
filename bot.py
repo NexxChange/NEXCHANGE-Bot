@@ -811,7 +811,7 @@ async def setup_panel(interaction: discord.Interaction):
     )
     embed.add_field(name="💰 INR to Crypto (I2C)", value=f"Rate: ₹{rates['I2C']}/$\nSend INR, receive USDT", inline=True)
     embed.add_field(name="💸 Crypto to INR (C2I)", value=f"Rate: ₹{rates['C2I']}/$\nSend USDT, receive INR", inline=True)
-    embed.add_field(name="ℹ️ Important", value="• Fixed rates, no negotiation\n• Read #tos before proceeding\n• ₹1/$ server handling charge\n• All deals protected by escrow", inline=False)
+    embed.add_field(name="ℹ️ Important", value="• Fixed rates, no negotiation\n• Read #tos before proceeding\n• All deals protected by escrow", inline=False)
     embed.set_footer(text="NexChange — Fast. Safe. Trusted.")
     await interaction.channel.send(embed=embed, view=ExchangeTypeView())
     await interaction.response.send_message("✅ Exchange panel setup complete.", ephemeral=True)
@@ -1033,7 +1033,16 @@ async def current_rates(interaction: discord.Interaction):
     embed.add_field(name="💰 I2C", value=f"₹{rates['I2C']} per $1", inline=True)
     embed.add_field(name="💸 C2I", value=f"₹{rates['C2I']} per $1", inline=True)
     await interaction.response.send_message(embed=embed)
-
+#--ping--
+@bot.tree.command(name="ping", description="Check if the bot is alive")
+async def ping(interaction: discord.Interaction):
+    latency = round(bot.latency * 1000)  # in ms
+    embed = discord.Embed(
+        title="🏓 Pong!",
+        description=f"Bot is online.\nLatency: **{latency} ms**",
+        color=discord.Color.green()
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # --- Custom Commands ---
 
@@ -1313,6 +1322,17 @@ async def on_message(message: discord.Message):
     if content.lower() == ".done":
         await handle_done(message, is_slash=False)
         return
+
+    # ---- .ping ----
+if content.lower() == ".ping":
+    latency = round(bot.latency * 1000)
+    embed = discord.Embed(
+        title="🏓 Pong!",
+        description=f"Bot is online.\nLatency: **{latency} ms**",
+        color=discord.Color.green()
+    )
+    await message.reply(embed=embed)
+    return
 
     # ---- .i2c<amount> ----
     dot_i2c = re.match(r"^\.i2c(\d+(\.\d+)?)$", content, re.IGNORECASE)
