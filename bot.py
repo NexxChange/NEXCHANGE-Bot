@@ -1259,9 +1259,9 @@ async def on_message(message: discord.Message):
         await message.reply(embed=embed)
         return
 
-    if content.lower() == ".makeqr":
+    if content.lower() == ".qr":
         if not message.reference:
-            await message.reply("❌ Reply to a message containing a UPI ID and use `.makeqr`.")
+            await message.reply("❌ Reply to a message containing a UPI ID and use `.qr`.")
             return
         try:
             ref_msg = await message.channel.fetch_message(message.reference.message_id)
