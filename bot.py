@@ -11,57 +11,74 @@ import io
 import pytz
 
 # ============================================================
-# NEXCHANGE BOT — FULL CODE
+# NEXCHANGE MAIN BOT — CLEANED
+# Commission, penalties, scheduled tasks → commission bot
+# All config now lives in bot_config.json (shared with commission bot)
 # ============================================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+IST = pytz.timezone("Asia/Kolkata")
 
-# ---------- CHANNEL IDs ----------
-CHANNEL_OPEN_TICKET         = 0
-CHANNEL_COMPLETED_DEALS     = 0
-CHANNEL_REVIEWS             = 0
-CHANNEL_PENALTY_BOARD       = 0
-CHANNEL_AVAILABLE_EXCHANGERS= 0
-CHANNEL_DEAL_LOGS           = 0
-CHANNEL_WEEKLY_COMMISSION   = 0
-CHANNEL_ANNOUNCEMENTS       = 0
-CHANNEL_TRANSACTIONS        = 1488840012173676545  # transcript channel
+# ============================================================
+# CONFIG & DATA HELPERS
+# ============================================================
 
-# ---------- ROLE IDs ----------
-ROLE_OWNER            = 1487024314246107206
-ROLE_ADMIN            = 1487024413516890225
-ROLE_MODERATOR        = 1487024595944079471
-ROLE_VERIFIED_EXCHANGER = 1487024698746474516
-ROLE_CLIENT           = 1487024799703109652
-ROLE_MEMBER           = 1487024877075697665
+MAIN_DATA_FILE = "nexchange_data.json"
+CONFIG_FILE    = "bot_config.json"
 
-STAFF_ROLE_IDS  = [ROLE_OWNER, ROLE_ADMIN, ROLE_MODERATOR]
-ADMIN_ROLE_IDS  = [ROLE_OWNER, ROLE_ADMIN]
-OWNER_ROLE_IDS  = [ROLE_OWNER]
-
-GUILD_ID              = 1486984795014828064
-COMMISSION_PER_DOLLAR = 1
-IST                   = pytz.timezone("Asia/Kolkata")
-
-# ---------- VOUCH TEMPLATE ----------
-VOUCH_TEMPLATE = "[Shiba vouch] ⭐ Deal done with NexChange! Fast and trusted service. Highly recommend!"
-
-# ---------- OPERATION STATUS ----------
-operation_status = {
-    "I2C": True,
-    "C2I": True,
-    "accepting_exchangers": True
+DEFAULT_CONFIG = {
+    "guild_id": 1486984795014828064,
+    "roles": {
+        "owner":              1487024314246107206,
+        "admin":              1487024413516890225,
+        "moderator":          1487024595944079471,
+        "verified_exchanger": 1487024698746474516,
+        "client":             1487024799703109652,
+        "member":             1487024877075697665
+    },
+    "channels": {
+        "open_ticket":          0,
+        "completed_deals":      0,
+        "reviews":              0,
+        "penalty_board":        0,
+        "available_exchangers": 0,
+        "deal_logs":            0,
+        "weekly_commission":    0,
+        "announcements":        0,
+        "transactions":         1488840012173676545
+    },
+    "commission": {
+        "rate_per_dollar": 1
+    },
+    "messages": {
+        "vouch_template": "[Shiba vouch] ⭐ Deal done with NexChange! Fast and trusted service. Highly recommend!"
+    }
 }
 
-# ============================================================
-# DATA
-# ============================================================
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "r") as f:
+            cfg = json.load(f)
+        def deep_merge(base, override):
+            for k, v in base.items():
+                if k not in override:
+                    override[k] = v
+                elif isinstance(v, dict) and isinstance(override[k], dict):
+                    deep_merge(v, override[k])
+        deep_merge(DEFAULT_CONFIG, cfg)
+        return cfg
+    # First run — create config
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(DEFAULT_CONFIG, f, indent=4)
+    return DEFAULT_CONFIG.copy()
 
-DATA_FILE = "nexchange_data.json"
+def save_config(cfg):
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(cfg, f, indent=4)
 
 def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
+    if os.path.exists(MAIN_DATA_FILE):
+        with open(MAIN_DATA_FILE, "r") as f:
             return json.load(f)
     return {
         "exchangers": {},
@@ -70,17 +87,34 @@ def load_data():
         "commission_owed": {},
         "rates": {"I2C": 100, "C2I": 97},
         "custom_commands": {},
-        "commission_wallet": "",
-        "vouch_template": VOUCH_TEMPLATE,
         "client_stats": {}
     }
 
 def save_data(data):
-    with open(DATA_FILE, "w") as f:
+    with open(MAIN_DATA_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
 def get_rates():
     return load_data().get("rates", {"I2C": 100, "C2I": 97})
+
+def get_commission_rate():
+    cfg = load_config()
+    return cfg["commission"]["rate_per_dollar"]
+
+def get_channel(guild, key):
+    cfg = load_config()
+    ch_id = cfg["channels"].get(key, 0)
+    return guild.get_channel(ch_id) if ch_id else None
+
+# ============================================================
+# OPERATION STATUS (runtime only — reset on restart)
+# ============================================================
+
+operation_status = {
+    "I2C": True,
+    "C2I": True,
+    "accepting_exchangers": True
+}
 
 # ============================================================
 # BOT SETUP
@@ -94,28 +128,31 @@ bot = commands.Bot(command_prefix=".", intents=intents)
 # ============================================================
 
 def is_staff(member: discord.Member) -> bool:
-    return any(r.id in STAFF_ROLE_IDS for r in member.roles)
+    cfg = load_config()
+    return any(r.id in [cfg["roles"]["owner"], cfg["roles"]["admin"], cfg["roles"]["moderator"]] for r in member.roles)
 
 def is_admin(member: discord.Member) -> bool:
-    return any(r.id in ADMIN_ROLE_IDS for r in member.roles)
+    cfg = load_config()
+    return any(r.id in [cfg["roles"]["owner"], cfg["roles"]["admin"]] for r in member.roles)
 
 def is_owner(member: discord.Member) -> bool:
-    return any(r.id in OWNER_ROLE_IDS for r in member.roles)
+    cfg = load_config()
+    return any(r.id == cfg["roles"]["owner"] for r in member.roles)
 
 def is_exchanger(member: discord.Member) -> bool:
-    return any(r.id == ROLE_VERIFIED_EXCHANGER for r in member.roles)
-
-def can_use_command(member: discord.Member) -> bool:
-    """True if member is staff or verified exchanger."""
-    return is_staff(member) or is_exchanger(member)
+    cfg = load_config()
+    return any(r.id == cfg["roles"]["verified_exchanger"] for r in member.roles)
 
 async def update_available_exchangers_channel(guild, data):
-    channel = guild.get_channel(CHANNEL_AVAILABLE_EXCHANGERS)
+    cfg = load_config()
+    channel = guild.get_channel(cfg["channels"].get("available_exchangers", 0))
     if not channel:
         return
     rates = data.get("rates", {"I2C": 100, "C2I": 97})
-    available = [(uid, ex) for uid, ex in data["exchangers"].items()
-                 if ex.get("available") and ex.get("verified")]
+    available = [
+        (uid, ex) for uid, ex in data["exchangers"].items()
+        if ex.get("available") and ex.get("verified") and not ex.get("commission_suspended")
+    ]
     embed = discord.Embed(
         title="🟢 Available Exchangers",
         description="These exchangers are currently online and ready to process deals.",
@@ -151,12 +188,11 @@ def generate_qr_image(upi_string: str) -> discord.File:
 
 
 async def save_transcript(channel: discord.TextChannel, ticket_data: dict, guild: discord.Guild):
-    """Saves a full text transcript + summary embed to CHANNEL_TRANSACTIONS."""
-    trans_channel = guild.get_channel(CHANNEL_TRANSACTIONS)
+    cfg = load_config()
+    trans_channel = guild.get_channel(cfg["channels"].get("transactions", 0))
     if not trans_channel:
         return
 
-    # Collect all messages
     messages = []
     async for msg in channel.history(limit=500, oldest_first=True):
         ts = msg.created_at.strftime("%d/%m/%Y %H:%M:%S")
@@ -174,7 +210,6 @@ async def save_transcript(channel: discord.TextChannel, ticket_data: dict, guild
         filename=f"transcript-{ticket_data.get('ticket_id', 'unknown')}.txt"
     )
 
-    # Summary embed
     embed = discord.Embed(
         title=f"📄 Transcript — {ticket_data.get('ticket_id', 'N/A')}",
         color=discord.Color.blurple()
@@ -188,6 +223,42 @@ async def save_transcript(channel: discord.TextChannel, ticket_data: dict, guild
     embed.set_footer(text="NexChange Transcript System")
 
     await trans_channel.send(embed=embed, file=transcript_file)
+
+
+# ============================================================
+# CLOSE TICKET LOGIC
+# ============================================================
+
+async def close_ticket(channel: discord.TextChannel, ticket_data: dict, guild: discord.Guild, closer: discord.Member):
+    cfg = load_config()
+    await save_transcript(channel, ticket_data, guild)
+
+    await channel.set_permissions(guild.default_role, read_messages=False, send_messages=False)
+    exchanger_role = guild.get_role(cfg["roles"]["verified_exchanger"])
+    if exchanger_role:
+        await channel.set_permissions(exchanger_role, read_messages=False, send_messages=False)
+
+    for role_id in [cfg["roles"]["admin"], cfg["roles"]["owner"]]:
+        role = guild.get_role(role_id)
+        if role:
+            await channel.set_permissions(role, read_messages=True, send_messages=True)
+
+    trans_channel_id = cfg["channels"].get("transactions", 0)
+    embed = discord.Embed(
+        title="🔒 Ticket Closed",
+        description=f"This ticket has been closed by {closer.mention}.\n\nTranscript saved to <#{trans_channel_id}>.\n\n⚠️ Only Admins/Owner can delete this channel.",
+        color=discord.Color.dark_gray()
+    )
+    await channel.send(embed=embed)
+
+    data = load_data()
+    for deal in data["deals"]:
+        if deal.get("ticket_id") == ticket_data.get("ticket_id"):
+            if deal.get("status") not in ["completed", "cancelled"]:
+                deal["status"] = "closed"
+            deal["closed_at"] = datetime.now().isoformat()
+            break
+    save_data(data)
 
 
 # ============================================================
@@ -220,10 +291,11 @@ class ClaimTicketView(discord.ui.View):
 
     @discord.ui.button(label="✅ Claim Ticket", style=discord.ButtonStyle.success, custom_id="claim_ticket")
     async def claim_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cfg = load_config()
         data = load_data()
         user_id = str(interaction.user.id)
 
-        role = discord.utils.get(interaction.guild.roles, id=ROLE_VERIFIED_EXCHANGER)
+        role = discord.utils.get(interaction.guild.roles, id=cfg["roles"]["verified_exchanger"])
         if role not in interaction.user.roles:
             await interaction.response.send_message("❌ You are not a verified exchanger.", ephemeral=True)
             return
@@ -233,6 +305,9 @@ class ClaimTicketView(discord.ui.View):
         exchanger = data["exchangers"][user_id]
         if not exchanger.get("available", False):
             await interaction.response.send_message("❌ You are currently marked as unavailable.", ephemeral=True)
+            return
+        if exchanger.get("commission_suspended"):
+            await interaction.response.send_message("❌ Your account is suspended due to unpaid commission. Pay via `/paycommission submit`.", ephemeral=True)
             return
         if self.ticket_data.get("amount", 0) > exchanger.get("limit", 0):
             await interaction.response.send_message(f"❌ This deal exceeds your limit of ${exchanger.get('limit', 0)}.", ephemeral=True)
@@ -332,6 +407,9 @@ class AvailabilityView(discord.ui.View):
         if user_id not in data["exchangers"]:
             await interaction.response.send_message("❌ You are not a registered exchanger.", ephemeral=True)
             return
+        if data["exchangers"][user_id].get("commission_suspended"):
+            await interaction.response.send_message("❌ You cannot go online while suspended for unpaid commission. Use `/paycommission submit` to pay.", ephemeral=True)
+            return
         data["exchangers"][user_id]["available"] = True
         save_data(data)
         await update_available_exchangers_channel(interaction.guild, data)
@@ -348,45 +426,6 @@ class AvailabilityView(discord.ui.View):
         save_data(data)
         await update_available_exchangers_channel(interaction.guild, data)
         await interaction.response.send_message("✅ You are now **Offline**.", ephemeral=True)
-
-
-# ============================================================
-# CLOSE TICKET LOGIC (shared between button and command)
-# ============================================================
-
-async def close_ticket(channel: discord.TextChannel, ticket_data: dict, guild: discord.Guild, closer: discord.Member):
-    """Closes a ticket: saves transcript, locks channel, does NOT delete."""
-    # Save transcript first
-    await save_transcript(channel, ticket_data, guild)
-
-    # Lock channel for everyone
-    await channel.set_permissions(guild.default_role, read_messages=False, send_messages=False)
-    exchanger_role = guild.get_role(ROLE_VERIFIED_EXCHANGER)
-    if exchanger_role:
-        await channel.set_permissions(exchanger_role, read_messages=False, send_messages=False)
-
-    # Only admins/owners can still see it
-    for role_id in ADMIN_ROLE_IDS:
-        role = guild.get_role(role_id)
-        if role:
-            await channel.set_permissions(role, read_messages=True, send_messages=True)
-
-    embed = discord.Embed(
-        title="🔒 Ticket Closed",
-        description=f"This ticket has been closed by {closer.mention}.\n\nTranscript saved to <#{CHANNEL_TRANSACTIONS}>.\n\n⚠️ Only Admins/Owner can delete this channel.",
-        color=discord.Color.dark_gray()
-    )
-    await channel.send(embed=embed)
-
-    # Update deal status
-    data = load_data()
-    for deal in data["deals"]:
-        if deal.get("ticket_id") == ticket_data.get("ticket_id"):
-            if deal.get("status") not in ["completed", "cancelled"]:
-                deal["status"] = "closed"
-            deal["closed_at"] = datetime.now().isoformat()
-            break
-    save_data(data)
 
 
 # ============================================================
@@ -427,16 +466,17 @@ class CreateTicketModal(discord.ui.Modal):
         guild = interaction.guild
         category = interaction.channel.category
         rates = get_rates()
+        cfg = load_config()
 
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
             interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
         }
-        for role_id in [ROLE_MODERATOR, ROLE_ADMIN, ROLE_OWNER]:
-            role = guild.get_role(role_id)
+        for role_key in ["moderator", "admin", "owner"]:
+            role = guild.get_role(cfg["roles"][role_key])
             if role:
                 overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-        exchanger_role = guild.get_role(ROLE_VERIFIED_EXCHANGER)
+        exchanger_role = guild.get_role(cfg["roles"]["verified_exchanger"])
         if exchanger_role:
             overwrites[exchanger_role] = discord.PermissionOverwrite(read_messages=True, send_messages=False)
 
@@ -479,7 +519,7 @@ class CreateTicketModal(discord.ui.Modal):
             embed.add_field(name="Client UPI", value=f"||{self.wallet.value}||", inline=False)
         embed.set_footer(text="⚡ Verified exchangers can claim this ticket below.")
 
-        online_ids = [uid for uid, ex in data["exchangers"].items() if ex.get("available") and ex.get("verified")]
+        online_ids = [uid for uid, ex in data["exchangers"].items() if ex.get("available") and ex.get("verified") and not ex.get("commission_suspended")]
         mentions = " ".join(f"<@{uid}>" for uid in online_ids) if online_ids else ""
         content = f"{mentions} — New {self.exchange_type} ticket!" if mentions else None
 
@@ -505,11 +545,12 @@ class CompleteDealModal(discord.ui.Modal, title="Complete Deal"):
             return
 
         data = load_data()
+        commission_rate = get_commission_rate()
         exchanger_id = self.ticket_data.get("exchanger_id")
         client_id = self.ticket_data.get("client_id")
         ticket_id = self.ticket_data.get("ticket_id")
         exchange_type = self.ticket_data.get("type")
-        commission = amount * COMMISSION_PER_DOLLAR
+        commission = amount * commission_rate
 
         for deal in data["deals"]:
             if deal.get("ticket_id") == ticket_id:
@@ -519,6 +560,7 @@ class CompleteDealModal(discord.ui.Modal, title="Complete Deal"):
                 deal["completed_at"] = datetime.now().isoformat()
                 break
 
+        # Track commission owed — commission bot will handle payment
         if exchanger_id not in data["commission_owed"]:
             data["commission_owed"][exchanger_id] = 0
         data["commission_owed"][exchanger_id] += commission
@@ -537,16 +579,17 @@ class CompleteDealModal(discord.ui.Modal, title="Complete Deal"):
 
         save_data(data)
 
+        cfg = load_config()
         guild = interaction.guild
-        completed_channel = guild.get_channel(CHANNEL_COMPLETED_DEALS)
-        logs_channel = guild.get_channel(CHANNEL_DEAL_LOGS)
+        completed_channel = guild.get_channel(cfg["channels"].get("completed_deals", 0))
+        logs_channel = guild.get_channel(cfg["channels"].get("deal_logs", 0))
 
         embed = discord.Embed(title=f"✅ Deal Completed — {ticket_id}", color=discord.Color.green())
         embed.add_field(name="Type", value=exchange_type, inline=True)
         embed.add_field(name="Amount", value=f"${amount}", inline=True)
         embed.add_field(name="Exchanger", value=f"<@{exchanger_id}>", inline=True)
         embed.add_field(name="Client", value=f"<@{client_id}>", inline=True)
-        embed.add_field(name="Commission", value=f"₹{commission:,.0f}", inline=True)
+        embed.add_field(name="Commission", value=f"${commission:.2f}", inline=True)
         embed.add_field(name="Completed At", value=datetime.now().strftime("%d/%m/%Y %H:%M"), inline=True)
         embed.set_footer(text="NexChange — Trusted Exchange Service")
 
@@ -555,20 +598,29 @@ class CompleteDealModal(discord.ui.Modal, title="Complete Deal"):
         if logs_channel:
             await logs_channel.send(embed=embed)
 
-        # Client stats
+        # Check threshold alert (commission bot reads same data)
+        owed_now = data["commission_owed"].get(exchanger_id, 0)
+        threshold = cfg.get("commission", {}).get("alert_threshold", 50)
+        if owed_now >= threshold:
+            member = guild.get_member(int(exchanger_id))
+            if member:
+                try:
+                    await member.send(
+                        f"💸 **Commission Balance Alert**\n\nYour NexChange commission balance has reached **${owed_now:.2f}**.\n\nConsider paying early to avoid suspension on Saturday.\n\nUse `/paycommission view` to see payment details."
+                    )
+                except Exception:
+                    pass
+
         stats = data["client_stats"][client_id]
         avg = stats["total_value"] / stats["total_exchanges"]
 
-        # Message 1 — Thanks
-        await interaction.channel.send("✅ Thanks for choosing us, deal done.")
+        vouch_template = cfg.get("messages", {}).get("vouch_template", "[Shiba vouch] ⭐ Deal done with NexChange!")
 
-        # Message 2 — Vouch template (bot message, NOT counted as vouch)
-        vouch_template = data.get("vouch_template", VOUCH_TEMPLATE)
+        await interaction.channel.send("✅ Thanks for choosing us, deal done.")
         await interaction.channel.send(
             f"📋 **Please copy and paste the vouch below in this channel to complete your vouch:**\n```\n{vouch_template}\n```"
         )
 
-        # Message 3 — Client stats
         stats_embed = discord.Embed(title="📊 Your NexChange Stats", color=discord.Color.gold())
         stats_embed.add_field(name="Total Exchanges", value=stats["total_exchanges"], inline=True)
         stats_embed.add_field(name="Total Volume", value=f"${stats['total_value']:,.2f}", inline=True)
@@ -576,9 +628,8 @@ class CompleteDealModal(discord.ui.Modal, title="Complete Deal"):
         stats_embed.set_footer(text=f"Stats for {interaction.guild.get_member(int(client_id)).display_name if interaction.guild.get_member(int(client_id)) else 'Client'}")
         await interaction.channel.send(embed=stats_embed)
 
-        # Message 4 — Ephemeral confirmation for exchanger
         await interaction.response.send_message(
-            f"✅ Deal marked complete. Commission ₹{commission:,.0f} logged.\n\nUse `.done` or `/done` when ready to close this ticket.",
+            f"✅ Deal marked complete. Commission **${commission:.2f}** logged.\n\nUse `.done` or `/done` when ready to close this ticket.",
             ephemeral=True
         )
 
@@ -598,6 +649,7 @@ class RegisterExchangerModal(discord.ui.Modal, title="Exchanger Registration"):
             await interaction.response.send_message("❌ Invalid limit.", ephemeral=True)
             return
 
+        cfg = load_config()
         rates = get_rates()
         required_deposit_inr = limit * rates["I2C"] * 2
         data = load_data()
@@ -613,13 +665,16 @@ class RegisterExchangerModal(discord.ui.Modal, title="Exchanger Registration"):
             "registered_at": datetime.now().isoformat(),
             "total_deals": 0,
             "verified": False,
+            "commission_suspended": False,
             "upi_slots": {"1": "", "2": "", "3": ""},
             "crypto_slots": {"1": "", "2": "", "3": ""}
         }
         save_data(data)
 
         guild = interaction.guild
-        admin_role = guild.get_role(ROLE_ADMIN)
+        admin_role = guild.get_role(cfg["roles"]["admin"])
+        logs_channel = guild.get_channel(cfg["channels"].get("deal_logs", 0))
+
         embed = discord.Embed(title="📝 New Exchanger Application", color=discord.Color.orange())
         embed.add_field(name="Applicant", value=interaction.user.mention, inline=True)
         embed.add_field(name="Requested Limit", value=f"${limit}", inline=True)
@@ -629,7 +684,6 @@ class RegisterExchangerModal(discord.ui.Modal, title="Exchanger Registration"):
         embed.add_field(name="⚠️ Staff Action", value=f"Verify **{self.shiba_username.value}** has 20+ Shiba vouches.\nUse `/verify_exchanger` or `/reject_exchanger`.", inline=False)
         embed.set_footer(text="DO NOT approve without verifying 20 Shiba vouches.")
 
-        logs_channel = guild.get_channel(CHANNEL_DEAL_LOGS)
         if logs_channel:
             await logs_channel.send(content=admin_role.mention if admin_role else "", embed=embed)
         await interaction.response.send_message(
@@ -656,13 +710,14 @@ class SetRateModal(discord.ui.Modal):
             return
 
         data = load_data()
+        cfg = load_config()
         if "rates" not in data:
             data["rates"] = {"I2C": 100, "C2I": 97}
         old_rate = data["rates"][self.rate_type]
         data["rates"][self.rate_type] = rate
         save_data(data)
 
-        announcements = interaction.guild.get_channel(CHANNEL_ANNOUNCEMENTS)
+        announcements = interaction.guild.get_channel(cfg["channels"].get("announcements", 0))
         embed = discord.Embed(title=f"📢 Rate Updated — {'I2C' if self.rate_type == 'I2C' else 'C2I'}", color=discord.Color.orange())
         embed.add_field(name="Old Rate", value=f"₹{old_rate}/$", inline=True)
         embed.add_field(name="New Rate", value=f"₹{rate}/$", inline=True)
@@ -728,37 +783,20 @@ class SetCryptoModal(discord.ui.Modal):
         await interaction.response.send_message(f"✅ Crypto Slot {self.slot} set to `{self.address.value.strip()}`.", ephemeral=True)
 
 
-class EditEmbedModal(discord.ui.Modal, title="Edit Panel Embed"):
-    new_title = discord.ui.TextInput(label="New Title", required=False, max_length=200)
-    new_description = discord.ui.TextInput(label="New Description", required=False, max_length=2000, style=discord.TextStyle.paragraph)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.send_message(
-            "✅ To edit a panel embed, reply to the panel message with `/editembed` or use `.editembed` — this modal captured your input.\n\nNote: Use `/setup_panel` to redeploy a fresh panel with current rates.",
-            ephemeral=True
-        )
-
-
 # ============================================================
-# DONE COMMAND LOGIC (shared)
+# DONE COMMAND LOGIC
 # ============================================================
 
 async def handle_done(ctx_or_interaction, is_slash=False):
-    """Shared logic for /done and .done"""
     if is_slash:
         channel = ctx_or_interaction.channel
         user = ctx_or_interaction.user
         guild = ctx_or_interaction.guild
-        respond = ctx_or_interaction.response.send_message
-        defer = ctx_or_interaction.response.defer
     else:
         channel = ctx_or_interaction.channel
         user = ctx_or_interaction.author
         guild = ctx_or_interaction.guild
-        respond = None
-        defer = None
 
-    # Find the active deal for this channel
     data = load_data()
     ticket_data = None
     for deal in data["deals"]:
@@ -790,20 +828,18 @@ async def handle_done(ctx_or_interaction, is_slash=False):
 
     if is_slash:
         await ctx_or_interaction.followup.send("✅ Ticket closed and transcript saved.", ephemeral=True)
-    else:
-        pass  # close_ticket already sends the embed
 
 
 # ============================================================
 # SLASH COMMANDS
 # ============================================================
 
-# --- Panel & Setup ---
-
 @bot.tree.command(name="setup_panel", description="Setup the main exchange panel [Admin only]")
 @app_commands.checks.has_any_role("Owner", "Admin")
 async def setup_panel(interaction: discord.Interaction):
+    cfg = load_config()
     rates = get_rates()
+    open_ticket_id = cfg["channels"].get("open_ticket", 0)
     embed = discord.Embed(
         title="💱 NEXCHANGE EXCHANGE PANEL",
         description="Welcome to NexChange — India's most trusted P2P crypto exchange.\n\nSelect your exchange type below to get started.",
@@ -829,7 +865,7 @@ async def setup_availability(interaction: discord.Interaction):
     await interaction.response.send_message("✅ Availability panel setup complete.", ephemeral=True)
 
 
-@bot.tree.command(name="setup_custom_panel", description="Create a custom ticket panel with custom title and description [Admin only]")
+@bot.tree.command(name="setup_custom_panel", description="Create a custom ticket panel [Admin only]")
 @app_commands.checks.has_any_role("Owner", "Admin")
 @app_commands.describe(title="Panel title", description="Panel description", button_label="Button label (optional)")
 async def setup_custom_panel(interaction: discord.Interaction, title: str, description: str, button_label: str = "📩 Open Ticket"):
@@ -848,8 +884,6 @@ async def setup_custom_panel(interaction: discord.Interaction, title: str, descr
     await interaction.response.send_message("✅ Custom panel created.", ephemeral=True)
 
 
-# --- Exchanger Management ---
-
 @bot.tree.command(name="apply_exchanger", description="Apply to become a verified exchanger")
 async def apply_exchanger(interaction: discord.Interaction):
     if not operation_status["accepting_exchangers"]:
@@ -862,6 +896,7 @@ async def apply_exchanger(interaction: discord.Interaction):
 @app_commands.checks.has_any_role("Owner", "Admin")
 @app_commands.describe(user="The exchanger to verify")
 async def verify_exchanger(interaction: discord.Interaction, user: discord.Member):
+    cfg = load_config()
     data = load_data()
     user_id = str(user.id)
     if user_id not in data["exchangers"]:
@@ -869,7 +904,7 @@ async def verify_exchanger(interaction: discord.Interaction, user: discord.Membe
         return
     data["exchangers"][user_id]["verified"] = True
     save_data(data)
-    role = interaction.guild.get_role(ROLE_VERIFIED_EXCHANGER)
+    role = interaction.guild.get_role(cfg["roles"]["verified_exchanger"])
     if role:
         await user.add_roles(role)
     embed = discord.Embed(title="✅ Exchanger Verified", description=f"{user.mention} verified.", color=discord.Color.green())
@@ -908,111 +943,19 @@ async def update_limit(interaction: discord.Interaction, user: discord.Member, n
     await user.send(f"📢 Your NexChange limit has been updated to **${new_limit}**.")
 
 
-# --- Penalties ---
-
-@bot.tree.command(name="add_penalty", description="Add a penalty to an exchanger [Staff only]")
-@app_commands.checks.has_any_role("Owner", "Admin", "Moderator")
-@app_commands.describe(user="Exchanger", amount="Penalty in INR", reason="Reason")
-async def add_penalty(interaction: discord.Interaction, user: discord.Member, amount: int, reason: str):
-    data = load_data()
-    user_id = str(user.id)
-    if user_id not in data["penalties"]:
-        data["penalties"][user_id] = []
-    data["penalties"][user_id].append({"amount": amount, "reason": reason, "paid": False, "date": datetime.now().isoformat(), "issued_by": str(interaction.user.id)})
-    role = interaction.guild.get_role(ROLE_VERIFIED_EXCHANGER)
-    if role and role in user.roles:
-        await user.remove_roles(role)
-    save_data(data)
-    penalty_channel = interaction.guild.get_channel(CHANNEL_PENALTY_BOARD)
-    embed = discord.Embed(title="⚠️ Penalty Issued", color=discord.Color.red())
-    embed.add_field(name="Exchanger", value=user.mention, inline=True)
-    embed.add_field(name="Amount", value=f"₹{amount}", inline=True)
-    embed.add_field(name="Reason", value=reason, inline=False)
-    if penalty_channel:
-        await penalty_channel.send(embed=embed)
-    await user.send(f"⚠️ Penalty of **₹{amount}** issued.\nReason: {reason}\nContact staff to settle.")
-    await interaction.response.send_message(f"✅ Penalty issued to {user.mention}.", ephemeral=True)
-
-
-@bot.tree.command(name="pay_penalty", description="Mark penalty as paid [Staff only]")
-@app_commands.checks.has_any_role("Owner", "Admin", "Moderator")
-@app_commands.describe(user="The exchanger who paid")
-async def pay_penalty(interaction: discord.Interaction, user: discord.Member):
-    data = load_data()
-    user_id = str(user.id)
-    unpaid = [p for p in data["penalties"].get(user_id, []) if not p["paid"]]
-    if not unpaid:
-        await interaction.response.send_message("✅ No unpaid penalties.", ephemeral=True)
-        return
-    total = sum(p["amount"] for p in unpaid)
-    for p in data["penalties"][user_id]:
-        if not p["paid"]:
-            p["paid"] = True
-            p["paid_at"] = datetime.now().isoformat()
-    save_data(data)
-    role = interaction.guild.get_role(ROLE_VERIFIED_EXCHANGER)
-    if role and role not in user.roles:
-        await user.add_roles(role)
-    await user.send(f"✅ Penalty of **₹{total}** cleared. You can resume trading.")
-    await interaction.response.send_message(f"✅ Penalties cleared for {user.mention}.", ephemeral=True)
-
-
-# --- Commission ---
-
-@bot.tree.command(name="commission_status", description="Check commission owed [Staff only]")
+@bot.tree.command(name="commission_status", description="View commission owed by an exchanger [Staff only — read only]")
 @app_commands.checks.has_any_role("Owner", "Admin", "Moderator")
 @app_commands.describe(user="The exchanger")
 async def commission_status(interaction: discord.Interaction, user: discord.Member):
     data = load_data()
     owed = data["commission_owed"].get(str(user.id), 0)
-    embed = discord.Embed(title="💰 Commission Status", color=discord.Color.blue())
-    embed.add_field(name="Exchanger", value=user.mention, inline=True)
-    embed.add_field(name="Commission Owed", value=f"₹{owed:,.0f}", inline=True)
+    rate = get_commission_rate()
+    embed = discord.Embed(title=f"💰 Commission — {user.display_name}", color=discord.Color.blue())
+    embed.add_field(name="Currently Owed", value=f"${owed:.2f}", inline=True)
+    embed.add_field(name="Rate", value=f"${rate}/deal $", inline=True)
+    embed.add_field(name="ℹ️ Note", value="To clear commission, use the commission bot's `/commission clear` command.", inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-
-@bot.tree.command(name="clear_commission", description="Clear commission after payment [Staff only]")
-@app_commands.checks.has_any_role("Owner", "Admin", "Moderator")
-@app_commands.describe(user="The exchanger who paid")
-async def clear_commission(interaction: discord.Interaction, user: discord.Member):
-    data = load_data()
-    user_id = str(user.id)
-    owed = data["commission_owed"].get(user_id, 0)
-    data["commission_owed"][user_id] = 0
-    save_data(data)
-    await interaction.response.send_message(f"✅ Commission ₹{owed:,.0f} cleared for {user.mention}.", ephemeral=True)
-
-
-@bot.tree.command(name="paycommission", description="View commission wallet or set it [Owner only for set]")
-@app_commands.describe(action="view / setaddress (Owner only)")
-async def paycommission(interaction: discord.Interaction, action: str = "view"):
-    data = load_data()
-    action = action.lower().strip()
-
-    if action == "view":
-        wallet = data.get("commission_wallet", "")
-        owed = data["commission_owed"].get(str(interaction.user.id), 0)
-        if not wallet:
-            await interaction.response.send_message("❌ Commission wallet not set yet. Ask the owner to set it with `/paycommission setaddress`.", ephemeral=True)
-            return
-        embed = discord.Embed(title="💳 Commission Payment", color=discord.Color.gold())
-        embed.add_field(name="Your Commission Owed", value=f"₹{owed:,.0f}", inline=False)
-        embed.add_field(name="Wallet Address", value=f"```{wallet}```", inline=False)
-        embed.add_field(name="Due", value="Every Saturday at 7 PM IST", inline=False)
-        embed.set_footer(text="Pay to the above address and notify staff after payment.")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    elif action == "setaddress":
-        if not is_owner(interaction.user):
-            await interaction.response.send_message("❌ Only the Owner can set the commission wallet.", ephemeral=True)
-            return
-        await interaction.response.send_modal(SetCommissionWalletModal())
-
-    else:
-        await interaction.response.send_message("❌ Use `view` or `setaddress`.", ephemeral=True)
-
-
-# --- Rates ---
 
 @bot.tree.command(name="set_i2c_rate", description="Change I2C rate [Admin only]")
 @app_commands.checks.has_any_role("Owner", "Admin")
@@ -1034,8 +977,6 @@ async def current_rates(interaction: discord.Interaction):
     embed.add_field(name="💸 C2I", value=f"₹{rates['C2I']} per $1", inline=True)
     await interaction.response.send_message(embed=embed)
 
-
-# --- Custom Commands ---
 
 @bot.tree.command(name="customcommand", description="Add, edit or remove custom comma commands [Staff only]")
 @app_commands.checks.has_any_role("Owner", "Admin", "Moderator")
@@ -1087,8 +1028,6 @@ async def customcommand(interaction: discord.Interaction, action: str):
         await interaction.response.send_message("❌ Use `add`, `remove`, or `list`.", ephemeral=True)
 
 
-# --- Exchanger Info ---
-
 @bot.tree.command(name="exchanger_info", description="View your exchanger profile")
 async def exchanger_info(interaction: discord.Interaction):
     data = load_data()
@@ -1098,15 +1037,14 @@ async def exchanger_info(interaction: discord.Interaction):
         return
     ex = data["exchangers"][user_id]
     commission_owed = data["commission_owed"].get(user_id, 0)
-    penalties = [p for p in data["penalties"].get(user_id, []) if not p["paid"]]
     embed = discord.Embed(title="💎 Your Exchanger Profile", color=discord.Color.blue())
     embed.add_field(name="Name", value=ex["name"], inline=True)
     embed.add_field(name="Limit", value=f"${ex['limit']}", inline=True)
     embed.add_field(name="Status", value="🟢 Online" if ex.get("available") else "🔴 Offline", inline=True)
     embed.add_field(name="Verified", value="✅ Yes" if ex.get("verified") else "⏳ Pending", inline=True)
     embed.add_field(name="Total Deals", value=ex.get("total_deals", 0), inline=True)
-    embed.add_field(name="Commission Owed", value=f"₹{commission_owed:,.0f}", inline=True)
-    embed.add_field(name="Pending Penalties", value=f"{len(penalties)}" if penalties else "None", inline=True)
+    embed.add_field(name="Commission Owed", value=f"${commission_owed:.2f}", inline=True)
+    embed.add_field(name="Suspended", value="⚠️ Yes — Pay commission" if ex.get("commission_suspended") else "✅ No", inline=True)
     upi = ex.get("upi_slots", {})
     crypto = ex.get("crypto_slots", {})
     embed.add_field(name="UPI Slots", value=f"1: `{upi.get('1','—')}` | 2: `{upi.get('2','—')}` | 3: `{upi.get('3','—')}`", inline=False)
@@ -1114,9 +1052,7 @@ async def exchanger_info(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-# --- Stats ---
-
-@bot.tree.command(name="stats", description="View server statistics [Staff only]")
+@bot.tree.command(name="stats", description="View server statistics [Admin only]")
 @app_commands.checks.has_any_role("Owner", "Admin")
 async def stats(interaction: discord.Interaction):
     data = load_data()
@@ -1126,20 +1062,16 @@ async def stats(interaction: discord.Interaction):
     embed = discord.Embed(title="📊 NexChange Statistics", color=discord.Color.gold())
     embed.add_field(name="Total Deals", value=len(completed), inline=True)
     embed.add_field(name="Total Volume", value=f"${total_volume:,.2f}", inline=True)
-    embed.add_field(name="Total Commission", value=f"₹{total_commission:,.0f}", inline=True)
+    embed.add_field(name="Total Commission", value=f"${total_commission:.2f}", inline=True)
     embed.add_field(name="Total Exchangers", value=len(data["exchangers"]), inline=True)
     embed.add_field(name="Verified", value=len([e for e in data["exchangers"].values() if e.get("verified")]), inline=True)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-# --- Done & Ticket Control ---
-
 @bot.tree.command(name="done", description="Close the ticket after deal is complete")
 async def done_slash(interaction: discord.Interaction):
     await handle_done(interaction, is_slash=True)
 
-
-# --- Operational Controls ---
 
 @bot.tree.command(name="startallexchanges", description="Resume ALL exchanges [Admin/Owner]")
 @app_commands.checks.has_any_role("Owner", "Admin")
@@ -1148,9 +1080,11 @@ async def startallexchanges(interaction: discord.Interaction):
     operation_status["I2C"] = True
     operation_status["C2I"] = True
     operation_status["accepting_exchangers"] = True
+    cfg = load_config()
     rates = get_rates()
-    announcements = interaction.guild.get_channel(CHANNEL_ANNOUNCEMENTS)
-    embed = discord.Embed(title="✅ ALL OPERATIONS RESUMED", description=f"All exchanges are back online.\nHead to <#{CHANNEL_OPEN_TICKET}> to start.", color=discord.Color.green())
+    announcements = interaction.guild.get_channel(cfg["channels"].get("announcements", 0))
+    open_ticket_id = cfg["channels"].get("open_ticket", 0)
+    embed = discord.Embed(title="✅ ALL OPERATIONS RESUMED", description=f"All exchanges are back online.\nHead to <#{open_ticket_id}> to start.", color=discord.Color.green())
     embed.add_field(name="I2C Rate", value=f"₹{rates['I2C']}/$", inline=True)
     embed.add_field(name="C2I Rate", value=f"₹{rates['C2I']}/$", inline=True)
     if announcements:
@@ -1166,7 +1100,8 @@ async def stopallexchanges(interaction: discord.Interaction, reason: str = "Emer
     operation_status["I2C"] = False
     operation_status["C2I"] = False
     operation_status["accepting_exchangers"] = False
-    announcements = interaction.guild.get_channel(CHANNEL_ANNOUNCEMENTS)
+    cfg = load_config()
+    announcements = interaction.guild.get_channel(cfg["channels"].get("announcements", 0))
     embed = discord.Embed(title="🚨 ALL OPERATIONS SUSPENDED", description=f"All exchange operations suspended.\n\n**Reason:** {reason}", color=discord.Color.dark_red())
     if announcements:
         await announcements.send(embed=embed)
@@ -1178,9 +1113,11 @@ async def stopallexchanges(interaction: discord.Interaction, reason: str = "Emer
 async def start_i2c(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     operation_status["I2C"] = True
+    cfg = load_config()
     rates = get_rates()
-    announcements = interaction.guild.get_channel(CHANNEL_ANNOUNCEMENTS)
-    embed = discord.Embed(title="✅ INR to Crypto — NOW OPEN", description=f"Head to <#{CHANNEL_OPEN_TICKET}> to start.", color=discord.Color.green())
+    open_ticket_id = cfg["channels"].get("open_ticket", 0)
+    announcements = interaction.guild.get_channel(cfg["channels"].get("announcements", 0))
+    embed = discord.Embed(title="✅ INR to Crypto — NOW OPEN", description=f"Head to <#{open_ticket_id}> to start.", color=discord.Color.green())
     embed.add_field(name="Rate", value=f"₹{rates['I2C']}/$", inline=True)
     if announcements:
         await announcements.send(embed=embed)
@@ -1193,7 +1130,8 @@ async def start_i2c(interaction: discord.Interaction):
 async def stop_i2c(interaction: discord.Interaction, reason: str = "Temporarily unavailable"):
     await interaction.response.defer(ephemeral=True)
     operation_status["I2C"] = False
-    announcements = interaction.guild.get_channel(CHANNEL_ANNOUNCEMENTS)
+    cfg = load_config()
+    announcements = interaction.guild.get_channel(cfg["channels"].get("announcements", 0))
     embed = discord.Embed(title="🔴 INR to Crypto — CLOSED", description=f"**Reason:** {reason}", color=discord.Color.red())
     if announcements:
         await announcements.send(embed=embed)
@@ -1205,9 +1143,11 @@ async def stop_i2c(interaction: discord.Interaction, reason: str = "Temporarily 
 async def start_c2i(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     operation_status["C2I"] = True
+    cfg = load_config()
     rates = get_rates()
-    announcements = interaction.guild.get_channel(CHANNEL_ANNOUNCEMENTS)
-    embed = discord.Embed(title="✅ Crypto to INR — NOW OPEN", description=f"Head to <#{CHANNEL_OPEN_TICKET}> to start.", color=discord.Color.green())
+    open_ticket_id = cfg["channels"].get("open_ticket", 0)
+    announcements = interaction.guild.get_channel(cfg["channels"].get("announcements", 0))
+    embed = discord.Embed(title="✅ Crypto to INR — NOW OPEN", description=f"Head to <#{open_ticket_id}> to start.", color=discord.Color.green())
     embed.add_field(name="Rate", value=f"₹{rates['C2I']}/$", inline=True)
     if announcements:
         await announcements.send(embed=embed)
@@ -1220,7 +1160,8 @@ async def start_c2i(interaction: discord.Interaction):
 async def stop_c2i(interaction: discord.Interaction, reason: str = "Temporarily unavailable"):
     await interaction.response.defer(ephemeral=True)
     operation_status["C2I"] = False
-    announcements = interaction.guild.get_channel(CHANNEL_ANNOUNCEMENTS)
+    cfg = load_config()
+    announcements = interaction.guild.get_channel(cfg["channels"].get("announcements", 0))
     embed = discord.Embed(title="🔴 Crypto to INR — CLOSED", description=f"**Reason:** {reason}", color=discord.Color.red())
     if announcements:
         await announcements.send(embed=embed)
@@ -1256,8 +1197,6 @@ async def start_exchanger_applications(interaction: discord.Interaction):
     await interaction.followup.send("✅ Applications open.", ephemeral=True)
 
 
-# --- UPI / Crypto Slot Commands ---
-
 @bot.tree.command(name="setupi", description="Set your UPI slot")
 @app_commands.describe(slot="Slot number (1, 2, or 3)", user="User to set for (Admin only)")
 async def setupi(interaction: discord.Interaction, slot: int, user: discord.Member = None):
@@ -1285,21 +1224,7 @@ async def setcrypto(interaction: discord.Interaction, slot: int, user: discord.M
 
 
 # ============================================================
-# SET COMMISSION WALLET MODAL
-# ============================================================
-
-class SetCommissionWalletModal(discord.ui.Modal, title="Set Commission Wallet Address"):
-    wallet_address = discord.ui.TextInput(label="Wallet Address", placeholder="Enter crypto wallet address", required=True, max_length=200)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        data = load_data()
-        data["commission_wallet"] = self.wallet_address.value.strip()
-        save_data(data)
-        await interaction.response.send_message(f"✅ Commission wallet set to:\n```{self.wallet_address.value.strip()}```", ephemeral=True)
-
-
-# ============================================================
-# PREFIX (.dot) COMMANDS via on_message
+# PREFIX (.dot) COMMANDS
 # ============================================================
 
 @bot.event
@@ -1309,24 +1234,20 @@ async def on_message(message: discord.Message):
 
     content = message.content.strip()
 
-    # ---- .done ----
     if content.lower() == ".done":
         await handle_done(message, is_slash=False)
         return
 
-    # ---- .i2c<amount> ----
     dot_i2c = re.match(r"^\.i2c(\d+(\.\d+)?)$", content, re.IGNORECASE)
     dot_c2i = re.match(r"^\.c2i(\d+(\.\d+)?)$", content, re.IGNORECASE)
 
     if dot_i2c or dot_c2i:
-        guild = message.guild
-        if not guild:
-            return
         if not is_exchanger(message.author) and not is_staff(message.author):
             await message.reply("❌ Only verified exchangers can use dot commands.")
             return
 
         rates = get_rates()
+        commission_rate = get_commission_rate()
         if dot_i2c:
             inr_amount = float(dot_i2c.group(1))
             usd_amount = inr_amount / rates["I2C"]
@@ -1340,18 +1261,17 @@ async def on_message(message: discord.Message):
             title = "💸 Crypto to INR — Deal Summary"
             description = f"Client sends **${usd_amount:.2f} USDT** → Exchanger releases **₹{inr_amount:,.0f}**"
 
-        commission = usd_amount * COMMISSION_PER_DOLLAR
+        commission = usd_amount * commission_rate
         embed = discord.Embed(title=title, description=description, color=color)
         embed.add_field(name="Type", value=exchange_type, inline=True)
         embed.add_field(name="Rate", value=f"₹{rate}/$", inline=True)
         embed.add_field(name="USD Amount", value=f"${usd_amount:.2f}", inline=True)
         embed.add_field(name="INR Amount", value=f"₹{inr_amount:,.0f}", inline=True)
-        embed.add_field(name="Commission", value=f"₹{commission:.0f}", inline=True)
+        embed.add_field(name="Commission", value=f"${commission:.2f}", inline=True)
         embed.set_footer(text=f"Calculated by {message.author.display_name} • NexChange")
         await message.reply(embed=embed)
         return
 
-    # ---- .makeqr ----
     if content.lower() == ".makeqr":
         if not message.reference:
             await message.reply("❌ Reply to a message containing a UPI ID and use `.makeqr`.")
@@ -1377,12 +1297,10 @@ async def on_message(message: discord.Message):
             await message.reply(f"❌ Failed to generate QR: {e}")
         return
 
-    # ---- .upi1 / .upi2 / .upi3 ----
     upi_match_cmd = re.match(r"^\.upi([123])$", content, re.IGNORECASE)
     if upi_match_cmd:
         slot = upi_match_cmd.group(1)
         data = load_data()
-        # Find exchanger in the channel's ticket
         ticket_data = next((d for d in data["deals"] if d.get("channel_id") == str(message.channel.id)), None)
         if ticket_data and ticket_data.get("exchanger_id"):
             exchanger_id = ticket_data["exchanger_id"]
@@ -1393,7 +1311,6 @@ async def on_message(message: discord.Message):
             else:
                 await message.channel.send(f"❌ UPI slot {slot} is not set by the exchanger.")
         else:
-            # Outside ticket — show own slot
             user_id = str(message.author.id)
             ex = data["exchangers"].get(user_id, {})
             upi = ex.get("upi_slots", {}).get(slot, "")
@@ -1403,7 +1320,6 @@ async def on_message(message: discord.Message):
                 await message.channel.send(f"❌ Your UPI slot {slot} is not set. Use `/setupi` to set it.")
         return
 
-    # ---- .crypto1 / .crypto2 / .crypto3 ----
     crypto_match_cmd = re.match(r"^\.crypto([123])$", content, re.IGNORECASE)
     if crypto_match_cmd:
         slot = crypto_match_cmd.group(1)
@@ -1427,24 +1343,18 @@ async def on_message(message: discord.Message):
                 await message.channel.send(f"❌ Your crypto slot {slot} is not set. Use `/setcrypto` to set it.")
         return
 
-    # ---- .setupi<slot> ----
     setupi_match = re.match(r"^\.setupi([123])$", content, re.IGNORECASE)
     if setupi_match:
         slot = int(setupi_match.group(1))
-        # Send a modal via a fake interaction is not possible in on_message
-        # So instruct user to use slash command
-        await message.reply(f"Please use `/setupi slot:{slot}` to set your UPI slot via the slash command.")
+        await message.reply(f"Please use `/setupi slot:{slot}` to set your UPI slot.")
         return
 
-    # ---- .setcrypto<slot> ----
     setcrypto_match = re.match(r"^\.setcrypto([123])$", content, re.IGNORECASE)
     if setcrypto_match:
         slot = int(setcrypto_match.group(1))
-        await message.reply(f"Please use `/setcrypto slot:{slot}` to set your crypto slot via the slash command.")
+        await message.reply(f"Please use `/setcrypto slot:{slot}` to set your crypto slot.")
         return
 
-    # ---- Prefix versions of slash commands ----
-    # .startallexchanges / .stopallexchanges
     if content.lower() == ".startallexchanges":
         if not is_admin(message.author):
             await message.reply("❌ Only Admins/Owner can use this command.")
@@ -1452,8 +1362,9 @@ async def on_message(message: discord.Message):
         operation_status["I2C"] = True
         operation_status["C2I"] = True
         operation_status["accepting_exchangers"] = True
+        cfg = load_config()
         rates = get_rates()
-        announcements = message.guild.get_channel(CHANNEL_ANNOUNCEMENTS)
+        announcements = message.guild.get_channel(cfg["channels"].get("announcements", 0))
         embed = discord.Embed(title="✅ ALL OPERATIONS RESUMED", color=discord.Color.green())
         embed.add_field(name="I2C Rate", value=f"₹{rates['I2C']}/$", inline=True)
         embed.add_field(name="C2I Rate", value=f"₹{rates['C2I']}/$", inline=True)
@@ -1470,14 +1381,14 @@ async def on_message(message: discord.Message):
         operation_status["I2C"] = False
         operation_status["C2I"] = False
         operation_status["accepting_exchangers"] = False
-        announcements = message.guild.get_channel(CHANNEL_ANNOUNCEMENTS)
+        cfg = load_config()
+        announcements = message.guild.get_channel(cfg["channels"].get("announcements", 0))
         embed = discord.Embed(title="🚨 ALL OPERATIONS SUSPENDED", description=f"**Reason:** {reason}", color=discord.Color.dark_red())
         if announcements:
             await announcements.send(embed=embed)
         await message.reply("🚨 All operations stopped.")
         return
 
-    # ---- ,custom commands ----
     if content.startswith(","):
         cmd_name = content[1:].strip().lower().split()[0]
         data = load_data()
@@ -1494,94 +1405,17 @@ async def on_message(message: discord.Message):
 
 
 # ============================================================
-# SCHEDULED TASKS
-# ============================================================
-
-@tasks.loop(minutes=30)
-async def commission_reminder():
-    """Every Saturday at 7 PM IST — remind exchangers to pay commission."""
-    now = datetime.now(IST)
-    if now.weekday() == 5 and now.hour == 19 and now.minute < 30:
-        data = load_data()
-        guild = bot.get_guild(GUILD_ID)
-        if not guild:
-            return
-        commission_channel = guild.get_channel(CHANNEL_WEEKLY_COMMISSION)
-        wallet = data.get("commission_wallet", "Not set — contact owner.")
-
-        for user_id, amount in data["commission_owed"].items():
-            if amount > 0:
-                member = guild.get_member(int(user_id))
-                if not member:
-                    continue
-
-                # Suspend exchanger role until paid
-                role = guild.get_role(ROLE_VERIFIED_EXCHANGER)
-                if role and role in member.roles:
-                    await member.remove_roles(role)
-                    # Update data
-                    if user_id in data["exchangers"]:
-                        data["exchangers"][user_id]["commission_suspended"] = True
-
-                try:
-                    await member.send(
-                        f"⚠️ **NexChange Weekly Commission Due**\n\n"
-                        f"You owe **₹{amount:,.0f}** in commission.\n\n"
-                        f"**Pay to:** `{wallet}`\n\n"
-                        f"Your exchanger role has been suspended until payment is confirmed by staff.\n"
-                        f"After paying, notify staff with proof."
-                    )
-                except Exception:
-                    pass
-
-        save_data(data)
-
-        if commission_channel:
-            embed = discord.Embed(title="📋 Weekly Commission Due", description=f"Commission is due today (Saturday 7 PM IST).", color=discord.Color.gold())
-            embed.add_field(name="Wallet", value=f"```{wallet}```", inline=False)
-            total = sum(v for v in data["commission_owed"].values() if v > 0)
-            embed.add_field(name="Total Outstanding", value=f"₹{total:,.0f}", inline=True)
-            embed.set_footer(text="Exchangers who have not paid have been suspended. Pay and notify staff.")
-            await commission_channel.send(embed=embed)
-
-
-@tasks.loop(hours=1)
-async def weekly_commission_report():
-    now = datetime.now(IST)
-    if now.weekday() == 6 and now.hour == 9:
-        data = load_data()
-        guild = bot.get_guild(GUILD_ID)
-        if not guild:
-            return
-        channel = guild.get_channel(CHANNEL_WEEKLY_COMMISSION)
-        if not channel:
-            return
-        embed = discord.Embed(title="📋 Weekly Commission Report", description=f"Week ending {now.strftime('%d/%m/%Y')}", color=discord.Color.gold())
-        total = 0
-        for user_id, amount in data["commission_owed"].items():
-            if amount > 0:
-                member = guild.get_member(int(user_id))
-                name = member.display_name if member else f"User {user_id}"
-                embed.add_field(name=name, value=f"₹{amount:,.0f} owed", inline=True)
-                total += amount
-        embed.add_field(name="Total Due", value=f"₹{total:,.0f}", inline=False)
-        await channel.send(embed=embed)
-
-
-# ============================================================
 # BOT EVENTS
 # ============================================================
 
 @bot.event
 async def on_ready():
-    print(f"✅ NexChange Bot is online as {bot.user}")
+    print(f"✅ NexChange Main Bot online as {bot.user}")
     try:
         synced = await bot.tree.sync()
         print(f"✅ Synced {len(synced)} slash commands")
     except Exception as e:
         print(f"❌ Sync error: {e}")
-    commission_reminder.start()
-    weekly_commission_report.start()
     bot.add_view(ExchangeTypeView())
     bot.add_view(AvailabilityView())
 
