@@ -943,19 +943,6 @@ async def update_limit(interaction: discord.Interaction, user: discord.Member, n
     await user.send(f"📢 Your NexChange limit has been updated to **${new_limit}**.")
 
 
-@bot.tree.command(name="commission_status", description="View commission owed by an exchanger [Staff only — read only]")
-@app_commands.checks.has_any_role("Owner", "Admin", "Moderator")
-@app_commands.describe(user="The exchanger")
-async def commission_status(interaction: discord.Interaction, user: discord.Member):
-    data = load_data()
-    owed = data["commission_owed"].get(str(user.id), 0)
-    rate = get_commission_rate()
-    embed = discord.Embed(title=f"💰 Commission — {user.display_name}", color=discord.Color.blue())
-    embed.add_field(name="Currently Owed", value=f"${owed:.2f}", inline=True)
-    embed.add_field(name="Rate", value=f"${rate}/deal $", inline=True)
-    embed.add_field(name="ℹ️ Note", value="To clear commission, use the commission bot's `/commission clear` command.", inline=False)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
 
 @bot.tree.command(name="set_i2c_rate", description="Change I2C rate [Admin only]")
 @app_commands.checks.has_any_role("Owner", "Admin")
